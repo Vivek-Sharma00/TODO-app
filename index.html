@@ -1,0 +1,389 @@
+<!--
+Project: Todo App (Cache Storage)
+Files included below:
+  1) index.html  (main single-file app)
+  2) sw.js       (service worker; create at project root)
+
+This app stores tasks using the Cache Storage API (each task is saved as a Response containing JSON)
+so tasks persist across visits and are easy to retrieve when visiting the site.
+
+How to use:
+  - Create a folder, add index.html and sw.js (exactly as below).
+  - Serve the folder over HTTP (e.g., GitHub Pages, Netlify, or a local dev server like `npx http-server`).
+  - Open the page, register service worker when prompted (automatic), add tasks.
+
+Notes & caveats:
+  - Cache Storage is primarily meant for Request/Response pairs (offline cache). We adapt it to store JSON by
+    storing each task as a Response object at a custom URL path like '/tasks/<id>'. This works across reloads
+    but is not a drop-in replacement for IndexedDB/localStorage for heavy data usage.
+  - For production or many tasks, prefer IndexedDB. This demo shows an alternate approach per your request.
+-->
+
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Todo App — Cache Storage</title>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --card: #0b1220;
+            --muted: #94a3b8;
+            --accent: #60a5fa
+        }
+
+        * {
+            box-sizing: border-box;
+            font-family: Inter, ui-sans-serif, system-ui, Segoe UI, Roboto, 'Helvetica Neue', Arial
+        }
+
+        body {
+            margin: 0;
+            background: linear-gradient(180deg, #071024, #07102a);
+            color: #e6eef8;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 32px
+        }
+
+        .app {
+            width: 100%;
+            max-width: 720px;
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 8px 30px rgba(2, 6, 23, 0.6)
+        }
+
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px
+        }
+
+        header h1 {
+            margin: 0;
+            font-size: 20px
+        }
+
+        .controls {
+            display: flex;
+            gap: 8px
+        }
+
+        .new-task {
+            display: flex;
+            margin-top: 16px;
+            gap: 8px
+        }
+
+        input[type=text] {
+            flex: 1;
+            padding: 10px 12px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            background: rgba(255, 255, 255, 0.02);
+            color: inherit
+        }
+
+        button {
+            padding: 10px 14px;
+            border-radius: 8px;
+            border: none;
+            background: var(--accent);
+            color: #042033;
+            cursor: pointer
+        }
+
+        .filters {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px
+        }
+
+        .chip {
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.02);
+            cursor: pointer
+        }
+
+        .chip.active {
+            background: rgba(96, 165, 250, 0.14);
+            border-color: rgba(96, 165, 250, 0.22)
+        }
+
+        ul.tasks {
+            list-style: none;
+            padding: 0;
+            margin: 18px 0 0 0;
+            display: grid;
+            gap: 8px
+        }
+
+        li.task {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.02)
+        }
+
+        li.task .title {
+            flex: 1
+        }
+
+        .title.completed {
+            text-decoration: line-through;
+            opacity: 0.6
+        }
+
+        .meta {
+            display: flex;
+            gap: 8px;
+            align-items: center
+        }
+
+        .hint {
+            color: var(--muted);
+            font-size: 13px;
+            margin-top: 8px
+        }
+
+        footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 12px;
+            font-size: 13px;
+            color: var(--muted)
+        }
+
+        .small-btn {
+            background: transparent;
+            border: 1px solid rgba(255, 255, 255, 0.03);
+            padding: 6px 8px;
+            border-radius: 8px;
+            color: var(--muted);
+            cursor: pointer
+        }
+
+        @media (max-width:520px) {
+            .app {
+                padding: 14px
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="app" role="application">
+        <header>
+            <h1>Todo (Cache Storage)</h1>
+            <div class="controls">
+                <div id="sw-status" title="Service Worker status">SW: <span id="sw-indicator">—</span></div>
+            </div>
+        </header>
+
+        <div class="new-task">
+            <input id="new-input" type="text" placeholder="Add a new task... (press Enter or click +)"
+                aria-label="New task">
+            <button id="add-btn" title="Add task">+</button>
+        </div>
+
+        <div class="filters" role="tablist" aria-label="Filters">
+            <div class="chip active" data-filter="all">All</div>
+            <div class="chip" data-filter="active">Active</div>
+            <div class="chip" data-filter="completed">Completed</div>
+        </div>
+
+        <ul class="tasks" id="task-list" aria-live="polite"></ul>
+
+        <div class="hint">Tasks stored using the browser Cache Storage API (each task saved as a JSON Response). Works
+            across reloads on the same origin.</div>
+
+        <footer>
+            <div id="count">0 tasks</div>
+            <div>
+                <button id="clear-completed" class="small-btn">Clear completed</button>
+                <button id="export-json" class="small-btn">Export JSON</button>
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        // ---------- Config ----------
+        const CACHE_NAME = 'todo-tasks-v1';
+        const TASK_URL_PREFIX = '/tasks/'; // cache key prefix used for storing tasks
+
+        // ---------- Utilities ----------
+        const $ = (sel, root = document) => root.querySelector(sel);
+        const el = (tag, props = {}) => Object.assign(document.createElement(tag), props);
+        const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+
+        // ---------- UI references ----------
+        const newInput = $('#new-input');
+        const addBtn = $('#add-btn');
+        const taskList = $('#task-list');
+        const filters = document.querySelectorAll('.chip');
+        const countEl = $('#count');
+        const swIndicator = $('#sw-indicator');
+        const clearCompletedBtn = $('#clear-completed');
+        const exportBtn = $('#export-json');
+
+        let currentFilter = 'all';
+        let tasks = {}; // in-memory cache of tasks
+
+        // ---------- Cache helpers (store tasks as Responses) ----------
+        async function openTasksCache() {
+            return await caches.open(CACHE_NAME);
+        }
+
+        // Save or update a task in the cache
+        async function saveTaskToCache(task) {
+            const cache = await openTasksCache();
+            const url = TASK_URL_PREFIX + task.id;
+            const response = new Response(JSON.stringify(task), { headers: { 'Content-Type': 'application/json' } });
+            await cache.put(url, response);
+        }
+
+        // Delete a task from cache
+        async function deleteTaskFromCache(id) {
+            const cache = await openTasksCache();
+            const url = TASK_URL_PREFIX + id;
+            await cache.delete(url);
+        }
+
+        // Load all tasks from cache into memory (tasks object)
+        async function loadAllTasksFromCache() {
+            const cache = await openTasksCache();
+            const keys = await cache.keys();
+            const loaded = {};
+            for (const req of keys) {
+                try {
+                    if (!req.url.includes(TASK_URL_PREFIX)) continue;
+                    const res = await cache.match(req);
+                    if (!res) continue;
+                    const json = await res.json();
+                    loaded[json.id] = json;
+                } catch (e) { console.error('load error', e) }
+            }
+            tasks = loaded;
+            renderTasks();
+        }
+
+        // Export tasks as a downloadable JSON file
+        function exportTasks() {
+            const arr = Object.values(tasks);
+            const blob = new Blob([JSON.stringify(arr, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = el('a', { href: url, download: 'todo-tasks.json' });
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        }
+
+        // ---------- Task operations ----------
+        async function addTask(text) {
+            const t = { id: uid(), text: text.trim(), completed: false, created: Date.now() };
+            tasks[t.id] = t;
+            await saveTaskToCache(t);
+            renderTasks();
+        }
+
+        async function toggleTask(id) {
+            if (!tasks[id]) return;
+            tasks[id].completed = !tasks[id].completed;
+            await saveTaskToCache(tasks[id]);
+            renderTasks();
+        }
+
+        async function deleteTask(id) {
+            delete tasks[id];
+            await deleteTaskFromCache(id);
+            renderTasks();
+        }
+
+        async function clearCompleted() {
+            const completed = Object.values(tasks).filter(t => t.completed).map(t => t.id);
+            for (const id of completed) await deleteTaskFromCache(id);
+            for (const id of completed) delete tasks[id];
+            renderTasks();
+        }
+
+        // ---------- Rendering ----------
+        function renderTasks() {
+            taskList.innerHTML = '';
+            const arr = Object.values(tasks).sort((a, b) => b.created - a.created);
+            let shown = 0;
+            for (const t of arr) {
+                if (currentFilter === 'active' && t.completed) continue;
+                if (currentFilter === 'completed' && !t.completed) continue;
+                const li = el('li', { className: 'task' });
+                const chk = el('input'); chk.type = 'checkbox'; chk.checked = t.completed; chk.addEventListener('change', () => toggleTask(t.id));
+                const title = el('div', { className: 'title', textContent: t.text }); if (t.completed) title.classList.add('completed');
+                const meta = el('div', { className: 'meta' });
+                const del = el('button', { className: 'small-btn', textContent: 'Delete' }); del.addEventListener('click', () => deleteTask(t.id));
+                meta.appendChild(del);
+                li.appendChild(chk);
+                li.appendChild(title);
+                li.appendChild(meta);
+                taskList.appendChild(li);
+                shown++;
+            }
+            countEl.textContent = `${Object.keys(tasks).length} tasks (${shown} shown)`;
+        }
+
+        // ---------- Events ----------
+        addBtn.addEventListener('click', () => {
+            const v = newInput.value.trim(); if (!v) return; addTask(v); newInput.value = ''; newInput.focus();
+        });
+        newInput.addEventListener('keydown', e => { if (e.key === 'Enter') { addBtn.click(); } });
+
+        filters.forEach(f => f.addEventListener('click', () => {
+            filters.forEach(x => x.classList.remove('active'));
+            f.classList.add('active');
+            currentFilter = f.dataset.filter;
+            renderTasks();
+        }));
+
+        clearCompletedBtn.addEventListener('click', clearCompleted);
+        exportBtn.addEventListener('click', exportTasks);
+
+        // ---------- Service worker registration & status ----------
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js').then(reg => {
+                swIndicator.textContent = 'registered';
+                console.log('SW registered', reg);
+            }).catch(err => {
+                swIndicator.textContent = 'failed';
+                console.warn('SW failed', err);
+            });
+        } else { swIndicator.textContent = 'n/a'; }
+
+        // ---------- Init: load tasks from cache ----------
+        loadAllTasksFromCache();
+
+        // ---------- Optional: clear cache function for debugging (not exposed in UI) ----------
+        async function clearAllTaskCache() {
+            const cache = await caches.open(CACHE_NAME);
+            const keys = await cache.keys();
+            for (const k of keys) await cache.delete(k);
+        }
+
+        // expose for debugging
+        window._todo = { tasks, saveTaskToCache, loadAllTasksFromCache, clearAllTaskCache };
+    </script>
+
+</body>
+
+</html>
