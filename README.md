@@ -5,7 +5,7 @@
 **What it is**
 A minimal Todo web app that stores tasks using the browser's Cache Storage API. Each task is saved as a `Response` containing JSON with a custom cache key like `/tasks/<id>`.
 
----
+ 
 
 ## 🎯 TODO-app Link
 
@@ -15,13 +15,13 @@ A minimal Todo web app that stores tasks using the browser's Cache Storage API. 
   </a>
 </p>
 
----
+ 
 
 **Files**
 - `index.html` — main app (UI + logic)
 - `sw.js` — optional service worker to cache the app shell
 
----
+ 
 
 **Features**
 - Add / toggle / delete tasks
@@ -29,21 +29,21 @@ A minimal Todo web app that stores tasks using the browser's Cache Storage API. 
 - Tasks persist across reloads (same origin) using Cache Storage
 - Export tasks to a JSON file
 
----
+ 
 
 **How to run**
 1. Put `index.html` and `sw.js` at the root of a web server.
 2. Serve the site over `https` or `http://localhost` (service workers require secure contexts).
 3. Open the page and interact with the app.
 
----
+ 
 
 **Deploy to GitHub Pages**
 1. Create a new repository and push the two files.
 2. Enable GitHub Pages from the repo settings (use `main` branch root).
 3. Visit `https://<your-username>.github.io/<repo>/`.
 
----
+ 
 
 **Resume bullet**
 ```
